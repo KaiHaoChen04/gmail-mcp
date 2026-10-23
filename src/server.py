@@ -1,6 +1,8 @@
 import base64
+import re
 from email.message import EmailMessage
 from pathlib import Path
+from html.parser import HTMLParser
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -18,6 +20,41 @@ CLIENT = ROOT / "client_secret.json"
 
 mcp = FastMCP("gmail")
 
+class _HTMLToText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.out, self._skip = [], False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip = True
+        elif tag in ("br", "p", "div", "tr", "li", "h1", "h2", "h3"):
+            self.out.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self._skip = False
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.out.append(data)
+
+
+def html_to_text(html: str) -> str:
+    p = _HTMLToText()
+    p.feed(html)
+    return re.sub(r"\n\s*\n+", "\n\n", "".join(p.out)).strip()
+
+
+def collect_bodies(part, found):
+    mime = part.get("mimeType", "")
+    data = part.get("body", {}).get("data")
+    if data and mime in ("text/plain", "text/html"):
+        data += "=" * (-len(data) % 4)  # fix missing base64 padding
+        text = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+        found.setdefault(mime, []).append(text)
+    for child in part.get("parts", []):
+        collect_bodies(child, found)
 
 def gmail():
     creds = None
