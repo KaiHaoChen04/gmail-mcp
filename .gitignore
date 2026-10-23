@@ -5,3 +5,5 @@ token.json
 .DS_Store
 .gitignore.swp
 __pycache__/
+.swp
+opencode.json
