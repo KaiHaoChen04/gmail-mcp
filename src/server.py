@@ -71,11 +71,17 @@ def gmail():
 
 
 @mcp.tool()
-def search_emails(query: str = "", max_results: int = 10) -> list[dict]:
-    """Search emails using Gmail search syntax (e.g. 'from:bob is:unread')."""
+def search_emails(
+    query: str = "",
+    max_results: int = 10,
+    primary_only: bool = True,
+) -> list[dict]:
+    """Search emails using Gmail search syntax (e.g. 'from:bob is:unread').
+    By default only searches the Primary tab; set primary_only=False to search everything."""
     svc = gmail()
+    q = f"category:primary {query}".strip() if primary_only else query
     res = svc.users().messages().list(
-        userId="me", q=query, maxResults=max_results
+        userId="me", q=q, maxResults=max_results
     ).execute()
     out = []
     for m in res.get("messages", []):
@@ -87,24 +93,22 @@ def search_emails(query: str = "", max_results: int = 10) -> list[dict]:
         out.append({"id": m["id"], "snippet": msg["snippet"], **headers})
     return out
 
-
 @mcp.tool()
 def read_email(message_id: str) -> str:
-    """Read the plain-text body of an email by ID."""
+    """Read the body of an email by ID (plain text, falling back to HTML)."""
     msg = gmail().users().messages().get(
         userId="me", id=message_id, format="full"
     ).execute()
 
-    def find_text(part):
-        if part.get("mimeType") == "text/plain" and part["body"].get("data"):
-            return base64.urlsafe_b64decode(part["body"]["data"]).decode()
-        for p in part.get("parts", []):
-            if (t := find_text(p)):
-                return t
-        return ""
+    found = {}
+    collect_bodies(msg["payload"], found)
 
-    return find_text(msg["payload"]) or msg["snippet"]
+    plain = "\n".join(found.get("text/plain", [])).strip()
+    html = html_to_text("\n".join(found.get("text/html", [])))
 
+    # Use whichever version has more content
+    body = html if len(html) > len(plain) else plain
+    return body or msg["snippet"]
 
 @mcp.tool()
 def create_draft(to: str, subject: str, body: str) -> str:
